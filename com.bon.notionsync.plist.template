@@ -18,8 +18,6 @@
 
         <key>NOTION_DATABASE_ID</key>
         <string>{{NOTION_DATABASE_ID}}</string>
-
-        {{WATCH_DIR_ENTRY}}
     </dict>
 
     <key>RunAtLoad</key>

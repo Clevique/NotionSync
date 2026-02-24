@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
 NotionSync - MDファイル自動保存スクリプト
-指定ディレクトリのmdファイルをNotionに保存し、元ファイルを削除
+指定ディレクトリのmdファイルをNotionに保存し、元ファイルをアーカイブ
 """
 
 import os
 import sys
 import time
+import json
+import shutil
 import logging
 from pathlib import Path
 from watchdog.observers import Observer
@@ -40,28 +42,31 @@ if not DATABASE_ID:
 # スクリプト自身のディレクトリを取得
 SCRIPT_DIR = Path(__file__).parent.resolve()
 
-# WATCH_DIR環境変数を取得（カンマ区切りで複数ディレクトリ対応）
-WATCH_DIR_ENV = os.environ.get("WATCH_DIR")
-if not WATCH_DIR_ENV or WATCH_DIR_ENV.strip() == "":
-    # 未設定の場合はスクリプトディレクトリを使用
-    watch_dirs = [str(SCRIPT_DIR)]
-    logging.info(f"WATCH_DIR環境変数が未設定のため、スクリプトディレクトリを監視: {SCRIPT_DIR}")
-else:
-    # カンマ区切りで複数ディレクトリをパース
-    watch_dirs = [d.strip() for d in WATCH_DIR_ENV.split(",") if d.strip()]
-    if not watch_dirs:
-        # 空文字列のみの場合はスクリプトディレクトリを使用
-        watch_dirs = [str(SCRIPT_DIR)]
-        logging.info(f"WATCH_DIR環境変数が空のため、スクリプトディレクトリを監視: {SCRIPT_DIR}")
-    else:
-        logging.info(f"WATCH_DIR環境変数から監視ディレクトリを取得: {', '.join(watch_dirs)}")
-
 # Notion クライアント初期化（API バージョン 2025-09-03 を使用）
 notion = Client(auth=NOTION_TOKEN, notion_version="2025-09-03")
 
 
+def load_sync_targets() -> list[dict]:
+    """sync_targets.json から同期対象ディレクトリを読み込む"""
+    config_path = SCRIPT_DIR / "sync_targets.json"
+    if not config_path.exists():
+        logging.error(f"設定ファイルが見つかりません: {config_path}")
+        sys.exit(1)
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            targets = json.load(f)
+    except json.JSONDecodeError as e:
+        logging.error(f"設定ファイルのJSON解析エラー: {e}")
+        sys.exit(1)
+    return targets
+
+
 class MarkdownHandler(FileSystemEventHandler):
     """Markdownファイルの作成を監視"""
+
+    def __init__(self, dir_note_map: dict[str, str | None]):
+        super().__init__()
+        self.dir_note_map = dir_note_map
 
     def on_created(self, event):
         if event.is_directory:
@@ -74,10 +79,11 @@ class MarkdownHandler(FileSystemEventHandler):
             logging.info(f"新しいMDファイルを検出: {file_path.name}")
             # ファイルの書き込みが完了するまで少し待機
             time.sleep(0.5)
-            self.process_markdown(file_path)
+            note_id = self.dir_note_map.get(str(file_path.parent))
+            self.process_markdown(file_path, note_id)
 
-    def process_markdown(self, file_path: Path):
-        """MarkdownファイルをNotionに保存し、元ファイルを削除"""
+    def process_markdown(self, file_path: Path, note_id: str | None = None):
+        """MarkdownファイルをNotionに保存し、元ファイルをアーカイブ"""
         try:
             # ファイル読み込み
             with open(file_path, 'r', encoding='utf-8') as f:
@@ -86,29 +92,37 @@ class MarkdownHandler(FileSystemEventHandler):
             # タイトル取得（ファイル名から拡張子を除く）
             title = file_path.stem
 
+            # プロパティを構築
+            properties = {
+                "Name": {
+                    "title": [
+                        {
+                            "text": {
+                                "content": title
+                            }
+                        }
+                    ]
+                }
+            }
+
+            if note_id is not None:
+                properties["Lit Notes"] = {"relation": [{"id": note_id}]}
+
             # Notionページ作成（data_source_id を使用）
             page = notion.pages.create(
                 parent={"data_source_id": DATABASE_ID},
-                properties={
-                    "Name": {
-                        "title": [
-                            {
-                                "text": {
-                                    "content": title
-                                }
-                            }
-                        ]
-                    }
-                },
+                properties=properties,
                 children=self.markdown_to_blocks(content)
             )
 
             logging.info(f"Notionに保存成功: {title}")
             logging.info(f"Page URL: https://notion.so/{page['id'].replace('-', '')}")
 
-            # 元ファイル削除
-            file_path.unlink()
-            logging.info(f"元ファイル削除: {file_path.name}")
+            # ファイルをアーカイブ
+            archive_dir = file_path.parent / "archived"
+            archive_dir.mkdir(exist_ok=True)
+            shutil.move(str(file_path), str(archive_dir / file_path.name))
+            logging.info(f"ファイルをアーカイブ: {file_path.name} → archived/")
 
         except Exception as e:
             logging.error(f"処理エラー ({file_path.name}): {str(e)}")
@@ -191,21 +205,21 @@ class MarkdownHandler(FileSystemEventHandler):
 
 
 def main():
-    """メイン処理"""
     logging.info("NotionSync 起動")
 
-    # WATCH_DIR環境変数の状態をログに記録
-    if os.environ.get("WATCH_DIR"):
-        logging.info(f"WATCH_DIR環境変数: {os.environ.get('WATCH_DIR')}")
-    else:
-        logging.info("WATCH_DIR環境変数: 未設定（スクリプトディレクトリを使用）")
+    # 同期対象を設定ファイルから読み込み
+    sync_targets = load_sync_targets()
+    logging.info(f"設定ファイルから {len(sync_targets)} 件の同期対象を読み込み")
 
-    # 各ディレクトリの存在チェックと自動作成
+    # dir_note_map を構築
+    dir_note_map: dict[str, str | None] = {}
+
     validated_dirs = []
-    for watch_dir in watch_dirs:
+    for target in sync_targets:
+        watch_dir = target["directory"]
+        note_id = target.get("note_id")
         watch_path = Path(watch_dir)
 
-        # ディレクトリが存在しない場合は自動作成を試みる
         if not watch_path.exists():
             logging.warning(f"監視ディレクトリが存在しません: {watch_dir}")
             try:
@@ -215,20 +229,19 @@ def main():
                 logging.error(f"監視ディレクトリの作成に失敗: {str(e)}")
                 sys.exit(1)
 
-        # 読み取り権限の確認
         if not os.access(watch_path, os.R_OK):
             logging.error(f"監視ディレクトリに読み取り権限がありません: {watch_dir}")
             sys.exit(1)
 
+        dir_note_map[watch_dir] = note_id
         validated_dirs.append(watch_dir)
-        logging.info(f"監視対象ディレクトリ: {watch_dir}")
+        logging.info(f"監視対象ディレクトリ: {watch_dir}" + (f" (note_id: {note_id})" if note_id else ""))
 
     if not validated_dirs:
         logging.error("監視対象ディレクトリがありません")
         sys.exit(1)
 
-    # 監視開始（複数ディレクトリ対応）
-    event_handler = MarkdownHandler()
+    event_handler = MarkdownHandler(dir_note_map)
     observer = Observer()
 
     for watch_dir in validated_dirs:

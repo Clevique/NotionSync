@@ -73,30 +73,10 @@ if [ -z "$NOTION_DATABASE_ID" ]; then
     exit 1
 fi
 
-# 監視ディレクトリの設定
-echo "監視するディレクトリのパスを入力してください:"
-echo "(デフォルト: スクリプトディレクトリ $SCRIPT_DIR)"
-echo "(空Enter: スクリプトディレクトリを使用)"
-echo "(複数指定: カンマ区切り 例: /path/to/dir1,/path/to/dir2)"
-read -r WATCH_DIR
-
-if [ -z "$WATCH_DIR" ] || [ "$WATCH_DIR" = "$SCRIPT_DIR" ]; then
-    echo "WATCH_DIR環境変数を設定しません（スクリプトディレクトリを監視）"
-    USE_WATCH_DIR_ENV=false
-else
-    echo "WATCH_DIR環境変数を設定します: $WATCH_DIR"
-    USE_WATCH_DIR_ENV=true
-fi
-
 echo ""
 echo "設定内容:"
 echo "  Python: $PYTHON_PATH"
 echo "  スクリプトディレクトリ: $SCRIPT_DIR"
-if [ "$USE_WATCH_DIR_ENV" = true ]; then
-    echo "  監視ディレクトリ: $WATCH_DIR (環境変数で設定)"
-else
-    echo "  監視ディレクトリ: $SCRIPT_DIR (スクリプトディレクトリ)"
-fi
 echo "  Database ID: $NOTION_DATABASE_ID"
 echo ""
 
@@ -113,29 +93,13 @@ fi
 mkdir -p "$HOME_DIR/Library/LaunchAgents"
 
 # テンプレートから plist を生成
-if [ "$USE_WATCH_DIR_ENV" = true ]; then
-    # WATCH_DIRを環境変数に追加
-    WATCH_DIR_ENTRY="<key>WATCH_DIR</key>
-        <string>$WATCH_DIR</string>"
-    sed -e "s|{{USERNAME}}|$USERNAME|g" \
-        -e "s|{{PYTHON_PATH}}|$PYTHON_PATH|g" \
-        -e "s|{{SCRIPT_PATH}}|$SCRIPT_DIR|g" \
-        -e "s|{{NOTION_TOKEN}}|$NOTION_TOKEN|g" \
-        -e "s|{{NOTION_DATABASE_ID}}|$NOTION_DATABASE_ID|g" \
-        -e "s|{{WATCH_DIR_ENTRY}}|$WATCH_DIR_ENTRY|g" \
-        -e "s|{{HOME}}|$HOME_DIR|g" \
-        "$PLIST_TEMPLATE" > "$PLIST_FILE"
-else
-    # WATCH_DIR環境変数を含めない
-    sed -e "s|{{USERNAME}}|$USERNAME|g" \
-        -e "s|{{PYTHON_PATH}}|$PYTHON_PATH|g" \
-        -e "s|{{SCRIPT_PATH}}|$SCRIPT_DIR|g" \
-        -e "s|{{NOTION_TOKEN}}|$NOTION_TOKEN|g" \
-        -e "s|{{NOTION_DATABASE_ID}}|$NOTION_DATABASE_ID|g" \
-        -e "s|{{WATCH_DIR_ENTRY}}||g" \
-        -e "s|{{HOME}}|$HOME_DIR|g" \
-        "$PLIST_TEMPLATE" > "$PLIST_FILE"
-fi
+sed -e "s|{{USERNAME}}|$USERNAME|g" \
+    -e "s|{{PYTHON_PATH}}|$PYTHON_PATH|g" \
+    -e "s|{{SCRIPT_PATH}}|$SCRIPT_DIR|g" \
+    -e "s|{{NOTION_TOKEN}}|$NOTION_TOKEN|g" \
+    -e "s|{{NOTION_DATABASE_ID}}|$NOTION_DATABASE_ID|g" \
+    -e "s|{{HOME}}|$HOME_DIR|g" \
+    "$PLIST_TEMPLATE" > "$PLIST_FILE"
 
 echo "✓ LaunchAgent設定ファイルを作成しました"
 
@@ -157,17 +121,9 @@ echo "===================================="
 echo "セットアップ完了！"
 echo "===================================="
 echo ""
-if [ "$USE_WATCH_DIR_ENV" = true ]; then
-    echo "監視ディレクトリ: $WATCH_DIR"
-    echo "【動作確認】"
-    echo "以下のコマンドでテストMDファイルを作成できます:"
-    echo "echo \"# テスト\\n\\nこれはテストです。\" > \"$WATCH_DIR/test.md\""
-else
-    echo "監視ディレクトリ: $SCRIPT_DIR (スクリプトディレクトリ)"
-    echo "【動作確認】"
-    echo "以下のコマンドでテストMDファイルを作成できます:"
-    echo "echo \"# テスト\\n\\nこれはテストです。\" > \"$SCRIPT_DIR/test.md\""
-fi
+echo "【動作確認】"
+echo "sync_targets.json を編集して監視ディレクトリを設定してください。"
+echo "参考: $SCRIPT_DIR/sync_targets.json.example"
 echo "ログファイル: $HOME_DIR/Library/Logs/NotionSync/notion_sync.log"
 echo ""
 echo ""
