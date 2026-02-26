@@ -8,6 +8,7 @@ Icon
 # Xcode
 Toukan/Toukan.xcodeproj/project.xcworkspace/
 Toukan/Toukan.xcodeproj/xcuserdata/
+Toukan/build/
 DerivedData/
 *.xcuserstate
 *.ipa
