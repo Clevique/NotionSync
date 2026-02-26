@@ -106,24 +106,32 @@ struct SettingsView: View {
 
 struct GeneralSettingsView: View {
 
-    @State private var isLaunchAtLoginEnabled: Bool = false
+    @State private var launchAtLoginError: String?
+
+    private var isEnabled: Bool {
+        SMAppService.mainApp.status == .enabled
+    }
 
     var body: some View {
         Form {
             Section {
-                Toggle("Launch at Login", isOn: $isLaunchAtLoginEnabled)
-                    .onChange(of: isLaunchAtLoginEnabled) { _, newValue in
-                        applyLaunchAtLogin(newValue)
-                    }
+                Toggle("Launch at Login", isOn: Binding(
+                    get: { isEnabled },
+                    set: { toggleLaunchAtLogin($0) }
+                ))
+
+                if let error = launchAtLoginError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
             }
         }
         .formStyle(.grouped)
-        .onAppear {
-            isLaunchAtLoginEnabled = SMAppService.mainApp.status == .enabled
-        }
     }
 
-    private func applyLaunchAtLogin(_ enable: Bool) {
+    private func toggleLaunchAtLogin(_ enable: Bool) {
+        launchAtLoginError = nil
         do {
             if enable {
                 try SMAppService.mainApp.register()
@@ -131,8 +139,7 @@ struct GeneralSettingsView: View {
                 try SMAppService.mainApp.unregister()
             }
         } catch {
-            // Revert the toggle if the system call fails.
-            isLaunchAtLoginEnabled = !enable
+            launchAtLoginError = "設定に失敗しました: \(error.localizedDescription)"
         }
     }
 }
